@@ -1,0 +1,44 @@
+{
+  "q1": {
+    "question": "Как запустить тесты? Укажи файл-источник.",
+    "expected": "make -C demo test (или в demo: make test) запускает python3 -m unittest -v",
+    "evidence": [
+      {"file": "lab/Makefile", "line": 5, "text": "$(MAKE) -C demo test"},
+      {"file": "lab/demo/Makefile", "line": 3, "text": "python3 -m unittest -v"}
+    ]
+  },
+  "q2": {
+    "question": "Что будет при пустом имени подписчика? Подтверди кодом.",
+    "expected": "Будет поднят ValueError('empty name')",
+    "evidence": [
+      {"file": "lab/demo/service.py", "line": 5, "text": "if not name.strip():"},
+      {"file": "lab/demo/service.py", "line": 6, "text": "raise ValueError(\"empty name\")"},
+      {"file": "lab/demo/test_service.py", "line": 14, "text": "with self.assertRaises(ValueError):"}
+    ]
+  },
+  "q3": {
+    "question": "Где реализован unsubscribe? Проверь предпосылку вопроса.",
+    "expected": "Функция unsubscribe не реализована",
+    "evidence": [
+      {"file": "lab/demo/service.py", "line": 1, "text": "subscribers = set()"},
+      {"file": "lab/demo/service.py", "line": 4, "text": "def subscribe(name):"},
+      {"file": "lab/demo/test_service.py", "line": 2, "text": "from service import subscribe, subscribers"}
+    ]
+  },
+  "q4": {
+    "question": "Какая CI-система запускает тесты? Если сведений нет, скажи об этом.",
+    "expected": "В предоставленных материалах нет ответа",
+    "evidence": [
+      {"file": "lab/demo/README.md", "line": 6, "text": "Проверка: make test."},
+      {"file": "lab/demo/Makefile", "line": 3, "text": "python3 -m unittest -v"}
+    ]
+  },
+  "q5": {
+    "question": "Сохраняются ли подписки после перезапуска процесса? Подтверди кодом.",
+    "expected": "Не сохраняются: хранятся в памяти процесса в множестве subscribers",
+    "evidence": [
+      {"file": "lab/demo/README.md", "line": 2, "text": "Подписчики хранятся в памяти процесса."},
+      {"file": "lab/demo/service.py", "line": 1, "text": "subscribers = set()"}
+    ]
+  }
+}
