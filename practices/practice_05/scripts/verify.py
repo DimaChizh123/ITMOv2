@@ -3,6 +3,7 @@ import json, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ARTIFACTS_DIR = ROOT/"test-results"
 
 def fail(msg):
     print(f"VERIFY FAIL: {msg}")
@@ -15,6 +16,8 @@ def read_json(p):
     return json.loads(Path(p).read_text(encoding="utf-8"))
 
 def main():
+    # Ensure artifacts directory exists for generated outputs
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     # Check AGENTS.md exists and mentions sudoku tool rule
     agents = (ROOT/"AGENTS.md")
     if not agents.exists():
@@ -141,12 +144,85 @@ def main():
     if out_invalid_pat.get("ok", True) or "'pattern' must be a non-empty string" not in out_invalid_pat.get("error",""):
         fail("empty pattern must return non-empty string error")
 
-    # extra args should be rejected
+    # extra args should be rejected (only pattern/visual/html_out allowed)
     proc_extra = subprocess.run(["python3", str(mcp_entry)], input=json.dumps({"tool":"sudoku.patterns","args":{"grid":[[]]}}).encode(), stdout=subprocess.PIPE)
     out_extra = json.loads(proc_extra.stdout.decode())
-    if out_extra.get("ok", True) or "only 'pattern' is supported" not in out_extra.get("error",""):
-        fail("extra args must be rejected")
+    if out_extra.get("ok", True) or "only 'pattern', 'visual', and 'html_out'" not in out_extra.get("error",""):
+        fail("extra args must be rejected per new allowed set")
     ok("patterns tests passed")
+
+    # Visual hint JSON mode: should include visual grid/candidates/action
+    proc_vis = subprocess.run(["python3", str(mcp_entry)], input=json.dumps({"tool":"sudoku.hint","args":{"grid":grid, "visual": True, "verbose": True}}).encode(), stdout=subprocess.PIPE)
+    out_vis = json.loads(proc_vis.stdout.decode())
+    if not out_vis.get("ok"):
+        fail(f"visual hint failed: {out_vis}")
+    res_vis = out_vis.get("result", {})
+    visual = res_vis.get("visual")
+    if not visual:
+        fail("visual block missing in visual mode")
+    vg = visual.get("grid")
+    vc = visual.get("candidates")
+    if not isinstance(vg, list) or len(vg) != 9 or any(len(r)!=9 for r in vg):
+        fail("visual.grid must be 9x9")
+    if not isinstance(vc, list) or len(vc) != 9 or any(len(r)!=9 for r in vc):
+        fail("visual.candidates must be 9x9")
+    action = visual.get("action")
+    if action:
+        t = action.get("type")
+        if t == "placement":
+            if "placement" not in action or "value" not in action["placement"]:
+                fail("placement must have value")
+        elif t == "elimination":
+            el = action.get("eliminations") or []
+            if not el or any("remove" not in e for e in el):
+                fail("eliminations must include remove")
+    ok("visual hint JSON validated")
+
+    # HTML generation for hint
+    hint_html = str(ARTIFACTS_DIR/"tmp-hint.html")
+    proc_html = subprocess.run(["python3", str(mcp_entry)], input=json.dumps({"tool":"sudoku.hint","args":{"grid":grid, "visual": True, "html_out": hint_html}}).encode(), stdout=subprocess.PIPE)
+    out_html = json.loads(proc_html.stdout.decode())
+    if not out_html.get("ok"):
+        fail(f"hint with html_out failed: {out_html}")
+    if not Path(hint_html).exists():
+        fail("html_out file not created for hint")
+    if "<html" not in Path(hint_html).read_text(encoding="utf-8"):
+        fail("html_out content invalid (no <html)")
+    ok("hint HTML generated")
+
+    # None state visual + HTML
+    empty_grid = [[0]*9 for _ in range(9)]
+    none_html = str(ARTIFACTS_DIR/"tmp-none.html")
+    proc_none = subprocess.run(["python3", str(mcp_entry)], input=json.dumps({"tool":"sudoku.hint","args":{"grid":empty_grid, "visual": True, "html_out": none_html}}).encode(), stdout=subprocess.PIPE)
+    out_none = json.loads(proc_none.stdout.decode())
+    if not out_none.get("ok") or out_none["result"].get("type") != "none":
+        fail("none visual expected")
+    if not Path(none_html).exists():
+        fail("none html_out file not created")
+    ok("none visual HTML generated")
+
+    # Contradiction visual + html_out must write HTML and return error
+    bad_grid = [row[:] for row in grid]
+    bad_grid[0][0] = 7
+    bad_grid[2][0] = 7  # duplicate in column 1
+    err_html = str(ARTIFACTS_DIR/"tmp-error.html")
+    proc_err = subprocess.run(["python3", str(mcp_entry)], input=json.dumps({"tool":"sudoku.hint","args":{"grid":bad_grid, "visual": True, "html_out": err_html}}).encode(), stdout=subprocess.PIPE)
+    out_err = json.loads(proc_err.stdout.decode())
+    if out_err.get("ok", True):
+        fail("contradiction should return ok:false")
+    if not Path(err_html).exists():
+        fail("error html_out not written")
+    ok("error visual HTML generated")
+
+    # Patterns HTML generation with visual example
+    pat_html = str(ARTIFACTS_DIR/"tmp-pattern.html")
+    proc_pat = subprocess.run(["python3", str(mcp_entry)], input=json.dumps({"tool":"sudoku.patterns","args":{"pattern":"x_wing", "visual": True, "html_out": pat_html}}).encode(), stdout=subprocess.PIPE)
+    out_pat = json.loads(proc_pat.stdout.decode())
+    if not out_pat.get("ok"):
+        fail(f"patterns visual failed: {out_pat}")
+    if not Path(pat_html).exists():
+        fail("patterns html_out not created")
+    ok("patterns visual HTML generated")
 
 if __name__ == "__main__":
     main()

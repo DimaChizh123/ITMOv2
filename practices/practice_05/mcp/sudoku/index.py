@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys, json
+from typing import List, Dict, Any, Optional
 
 def is_grid_9x9(grid):
     if not isinstance(grid, list) or len(grid) != 9:
@@ -379,6 +380,12 @@ def main():
         return
     tool = req.get("tool")
     args = req.get("args") or {}
+    # Optional visual flags; default off to preserve backward compatibility
+    visual = bool(args.get("visual", False))
+    html_out = args.get("html_out")
+    if html_out is not None and not isinstance(html_out, str):
+        print(json.dumps({"ok": False, "error": "Invalid arguments: 'html_out' must be a string path"}))
+        return
 
     # Static registry of pattern cards for sudoku.patterns
     PATTERN_CARDS = {
@@ -394,9 +401,9 @@ def main():
                 "Поставьте это значение и обновите кандидатов."
             ],
             "example": {
-                "grid": [[8,0,0,0,0,0,0,0,0],[0,0,3,6,0,0,0,0,0],[0,7,0,0,9,0,2,0,0],[0,5,0,0,0,7,0,0,0],[0,0,0,0,4,5,7,0,0],[0,0,0,1,0,0,0,3,0],[0,0,1,0,0,0,0,6,8],[0,0,8,5,0,0,0,1,0],[0,9,0,0,0,0,4,0,0]],
+                "grid": [[0,0,0,0,4,0,0,0,0],[0,0,0,0,7,0,0,0,0],[0,0,0,0,6,0,0,0,0],[0,0,0,0,2,0,0,0,0],[1,2,3,4,0,5,6,7,8],[0,0,0,0,1,0,0,0,0],[0,0,0,0,3,0,0,0,0],[0,0,0,0,5,0,0,0,0],[0,0,0,0,8,0,0,0,0]],
                 "highlights": {
-                    "cells": [{"row":0, "col":3}],
+                    "cells": [{"row":4, "col":4}],
                     "eliminations": []
                 }
             },
@@ -410,7 +417,7 @@ def main():
             "intuition": "Если цифра может стоять только в одной клетке строки, это скрытый сингл.",
             "how_to_apply": ["Определите кандидатов по строке.", "Найдите цифру с единственной позицией.", "Заполните клетку."],
             "example": {"grid": [[0,0,0,2,6,0,7,0,1],[6,8,0,0,7,0,0,9,0],[1,9,0,0,0,4,5,0,0],[8,2,0,1,0,0,0,4,0],[0,0,4,6,0,2,9,0,0],[0,5,0,0,0,3,0,2,8],[0,0,9,3,0,0,0,7,4],[0,4,0,0,5,0,0,3,6],[7,0,3,0,1,8,0,0,0]],
-                        "highlights": {"cells": [], "eliminations": []}}
+                        "highlights": {"cells": [{"row":0,"col":0}], "eliminations": []}}
         },
         "hidden_single_col": {
             "id": "hidden_single_col",
@@ -420,7 +427,7 @@ def main():
             "intuition": "Если цифра возможна только в одной клетке столбца, это скрытый сингл.",
             "how_to_apply": ["Определите кандидатов по столбцу.", "Найдите цифру с единственной позицией.", "Заполните клетку."],
             "example": {"grid": [[0,0,0,2,6,0,7,0,1],[6,8,0,0,7,0,0,9,0],[1,9,0,0,0,4,5,0,0],[8,2,0,1,0,0,0,4,0],[0,0,4,6,0,2,9,0,0],[0,5,0,0,0,3,0,2,8],[0,0,9,3,0,0,0,7,4],[0,4,0,0,5,0,0,3,6],[7,0,3,0,1,8,0,0,0]],
-                        "highlights": {"cells": [], "eliminations": []}}
+                        "highlights": {"cells": [{"row":2,"col":0}], "eliminations": []}}
         },
         "hidden_single_box": {
             "id": "hidden_single_box",
@@ -430,7 +437,7 @@ def main():
             "intuition": "Если цифра возможна только в одной клетке блока, это скрытый сингл.",
             "how_to_apply": ["Определите кандидатов в блоке.", "Найдите цифру с единственной позицией.", "Заполните клетку."],
             "example": {"grid": [[0,0,0,2,6,0,7,0,1],[6,8,0,0,7,0,0,9,0],[1,9,0,0,0,4,5,0,0],[8,2,0,1,0,0,0,4,0],[0,0,4,6,0,2,9,0,0],[0,5,0,0,0,3,0,2,8],[0,0,9,3,0,0,0,7,4],[0,4,0,0,5,0,0,3,6],[7,0,3,0,1,8,0,0,0]],
-                        "highlights": {"cells": [], "eliminations": []}}
+                        "highlights": {"cells": [{"row":1,"col":0}], "eliminations": []}}
         },
         "locked_candidate_pointing": {
             "id": "locked_candidate_pointing",
@@ -495,15 +502,15 @@ def main():
     }
 
     if tool == "sudoku.patterns":
-        # Strict arg validation: only 'pattern' allowed
+        # Strict arg validation: allow 'pattern' (required), optional 'visual' and 'html_out'
         if not args:
             # List mode
             patterns = list(PATTERN_CARDS.keys())
             print(json.dumps({"ok": True, "result": {"patterns": patterns}}, ensure_ascii=False))
             return
-        # If any key other than 'pattern' present -> error
-        if set(args.keys()) - {"pattern"}:
-            print(json.dumps({"ok": False, "error": "Invalid arguments: only 'pattern' is supported"}))
+        allowed = {"pattern", "visual", "html_out"}
+        if set(args.keys()) - allowed:
+            print(json.dumps({"ok": False, "error": "Invalid arguments: only 'pattern', 'visual', and 'html_out' are supported"}))
             return
         pat = args.get("pattern")
         if not isinstance(pat, str) or len(pat.strip()) == 0:
@@ -512,7 +519,25 @@ def main():
         if pat not in PATTERN_CARDS:
             print(json.dumps({"ok": False, "error": f"Unknown pattern id: {pat}"}))
             return
-        print(json.dumps({"ok": True, "result": PATTERN_CARDS[pat]}, ensure_ascii=False))
+        card = PATTERN_CARDS[pat]
+        # Populate visual example if requested
+        result_obj = card
+        if visual:
+            try:
+                built_card = build_card(card, pat)
+            except Exception as e:
+                print(json.dumps({"ok": False, "error": f"Failed to build visual card: {str(e)}"}, ensure_ascii=False))
+                return
+            result_obj = built_card
+            if html_out:
+                html = render_html_for_patterns(result_obj)
+                try:
+                    with open(html_out, "w", encoding="utf-8") as f:
+                        f.write(html)
+                except Exception as e:
+                    print(json.dumps({"ok": False, "error": f"Failed to write HTML: {str(e)}"}))
+                    return
+        print(json.dumps({"ok": True, "result": result_obj}, ensure_ascii=False))
         return
 
     if tool != "sudoku.hint":
@@ -527,6 +552,16 @@ def main():
     verbose = bool(args.get("verbose", True))
     contradiction = check_contradictions(grid)
     if contradiction:
+        # Generate HTML on error if visual and html_out are provided
+        if visual and html_out:
+            try:
+                cand = gen_all_candidates(grid)
+                html = render_html_error(grid, cand, f"Contradiction: {contradiction}")
+                with open(html_out, "w", encoding="utf-8") as f:
+                    f.write(html)
+            except Exception as e:
+                print(json.dumps({"ok": False, "error": f"Failed to write HTML: {str(e)}"}))
+                return
         print(json.dumps({"ok": False, "error": f"Contradiction: {contradiction}"}))
         return
     steps = []
@@ -541,14 +576,60 @@ def main():
             res = {"type": "none", "message": "Подсказок не найдено на текущем уровне"}
             if verbose:
                 res["steps"] = steps
+            # Attach visual grid/candidates if requested and HTML output if path provided
+            if visual:
+                res["visual"] = {
+                    "grid": grid,
+                    "candidates": gen_all_candidates(grid),
+                    "pattern": None,
+                    "action": None
+                }
+                if html_out:
+                    try:
+                        html = render_html_for_hint(res)
+                        with open(html_out, "w", encoding="utf-8") as f:
+                            f.write(html)
+                    except Exception as e:
+                        print(json.dumps({"ok": False, "error": f"Failed to write HTML: {str(e)}"}))
+                        return
             print(json.dumps({"ok": True, "result": res}, ensure_ascii=False))
             return
         if verbose:
             adv["steps"] = steps
+        # Visual/card/html attach if requested
+        if visual:
+            adv["visual"] = build_visual_block(adv, grid, PATTERN_CARDS)
+            try:
+                adv["card"] = build_card(PATTERN_CARDS.get(adv["type"], {}), adv["type"])
+            except Exception:
+                adv["card"] = None
+            if html_out:
+                try:
+                    html = render_html_for_hint(adv)
+                    with open(html_out, "w", encoding="utf-8") as f:
+                        f.write(html)
+                except Exception as e:
+                    print(json.dumps({"ok": False, "error": f"Failed to write HTML: {str(e)}"}))
+                    return
         print(json.dumps({"ok": True, "result": adv}, ensure_ascii=False))
         return
     if verbose:
         hint["steps"] = steps
+    # Visual/card/html attach if requested
+    if visual:
+        hint["visual"] = build_visual_block(hint, grid, PATTERN_CARDS)
+        try:
+            hint["card"] = build_card(PATTERN_CARDS.get(hint["type"], {}), hint["type"])
+        except Exception:
+            hint["card"] = None
+        if html_out:
+            try:
+                html = render_html_for_hint(hint)
+                with open(html_out, "w", encoding="utf-8") as f:
+                    f.write(html)
+            except Exception as e:
+                print(json.dumps({"ok": False, "error": f"Failed to write HTML: {str(e)}"}))
+                return
     print(json.dumps({"ok": True, "result": hint}, ensure_ascii=False))
 
 # Helpers for advanced patterns
@@ -691,6 +772,329 @@ def swordfish(grid):
                     "cols": [c1, c2, c3]
                 }
     return None
+
+# ===== Visual builders and HTML rendering =====
+
+def build_visual_action(res: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Form {type, placement?, eliminations?} based on current fields.
+    Uses 0-based coordinates and keys value/remove per contract.
+    """
+    placement = res.get("placement")
+    eliminations = res.get("eliminations")
+    if not placement and not eliminations:
+        return None
+    # If both present, prefer 'elimination' only when placement missing; otherwise 'placement'
+    action_type = "placement" if placement else "elimination"
+    action: Dict[str, Any] = {"type": action_type}
+    if placement:
+        action["placement"] = {"row": placement["row"], "col": placement["col"], "value": placement["value"]}
+    if eliminations:
+        action["eliminations"] = [{"row": e["row"], "col": e["col"], "remove": e["remove"]} for e in eliminations]
+    return action
+
+def build_visual_pattern(res: Dict[str, Any], grid: List[List[int]]) -> Optional[Dict[str, Any]]:
+    """Build anchors with roles and params according to technique type.
+    Minimal anchors are produced; roles map as per contract.
+    """
+    typ = res.get("type")
+    if not typ or typ == "none":
+        return None
+    anchors: List[Dict[str, Any]] = []
+    params: Dict[str, Any] = {}
+    cand = gen_all_candidates(grid)
+
+    if typ in ("naked_single", "hidden_single_row", "hidden_single_col", "hidden_single_box"):
+        pl = res.get("placement")
+        if pl:
+            anchors.append({"row": pl["row"], "col": pl["col"], "role": "target"})
+    elif typ == "locked_candidate_pointing":
+        d = res.get("digit")
+        box = res.get("box") or {}
+        br, bc = box.get("br"), box.get("bc")
+        if d is not None and br is not None and bc is not None:
+            for dr in range(3):
+                for dc in range(3):
+                    r = br*3+dr
+                    c = bc*3+dc
+                    if d in cand[r][c]:
+                        anchors.append({"row": r, "col": c, "role": "box_candidate"})
+            params = {"digit": d, "box": {"br": br, "bc": bc}}
+    elif typ == "locked_candidate_claiming":
+        d = res.get("digit")
+        box = res.get("box") or {}
+        br, bc = box.get("br"), box.get("bc")
+        if d is not None and br is not None and bc is not None:
+            # Try to find the constrained row in that box
+            found_row = None
+            for r in range(9):
+                cells = [(r, c) for c in range(9) if d in cand[r][c]]
+                boxes = {(r//3, c//3) for _, c in cells}
+                if len(cells) >= 2 and boxes == {(br, bc)}:
+                    found_row = r
+                    break
+            if found_row is not None:
+                for c in range(9):
+                    if d in cand[found_row][c] and (found_row//3, c//3) == (br, bc):
+                        anchors.append({"row": found_row, "col": c, "role": "row_candidate"})
+                params = {"digit": d, "box": {"br": br, "bc": bc}, "row": found_row}
+            else:
+                # else try column
+                found_col = None
+                for c in range(9):
+                    cells = [(r, c) for r in range(9) if d in cand[r][c]]
+                    boxes = {((r)//3, (c)//3) for r, _ in cells}
+                    if len(cells) >= 2 and boxes == {(br, bc)}:
+                        found_col = c
+                        break
+                if found_col is not None:
+                    for r in range(9):
+                        if d in cand[r][found_col] and (r//3, found_col//3) == (br, bc):
+                            anchors.append({"row": r, "col": found_col, "role": "col_candidate"})
+                    params = {"digit": d, "box": {"br": br, "bc": bc}, "col": found_col}
+    elif typ == "naked_pair":
+        pair = res.get("pair") or []
+        elim = res.get("eliminations") or []
+        unit = None
+        if elim:
+            rows = {e["row"] for e in elim}
+            cols = {e["col"] for e in elim}
+            if len(rows) == 1:
+                unit = ("row", list(rows)[0])
+            elif len(cols) == 1:
+                unit = ("col", list(cols)[0])
+            else:
+                boxes = {((e["row"]//3), (e["col"]//3)) for e in elim}
+                if len(boxes) == 1:
+                    unit = ("box", list(boxes)[0])
+        if unit:
+            kind, idx = unit
+            indices = []
+            if kind == "row":
+                indices = [(idx, c) for c in range(9)]
+            elif kind == "col":
+                indices = [(r, idx) for r in range(9)]
+            elif kind == "box":
+                br, bc = idx
+                indices = [(br*3+dr, bc*3+dc) for dr in range(3) for dc in range(3)]
+            for (r, c) in indices:
+                cs = cand[r][c]
+                if len(cs) == 2 and sorted(cs) == sorted(pair):
+                    anchors.append({"row": r, "col": c, "role": "pair"})
+            params = {"pair": pair, "unit": unit}
+    elif typ == "x_wing":
+        d = res.get("digit")
+        rows = res.get("rows") or []
+        cols = res.get("cols") or []
+        for r in rows:
+            for c in cols:
+                anchors.append({"row": r, "col": c, "role": "corner"})
+        params = {"digit": d, "rows": rows, "cols": cols}
+    elif typ == "xy_wing":
+        pivot = res.get("pivot")
+        pincers = res.get("pincers") or []
+        if pivot:
+            anchors.append({"row": pivot["row"], "col": pivot["col"], "role": "pivot"})
+        for p in pincers:
+            anchors.append({"row": p["row"], "col": p["col"], "role": "pincer"})
+        params = {"pivot": pivot, "pincers": pincers}
+    elif typ == "swordfish":
+        d = res.get("digit")
+        rows = res.get("rows") or []
+        cols = res.get("cols") or []
+        for r in rows:
+            for c in cols:
+                if d is None or d in cand[r][c]:
+                    anchors.append({"row": r, "col": c, "role": "corner"})
+        params = {"digit": d, "rows": rows, "cols": cols}
+    else:
+        return None
+    return {"id": typ, "anchors": anchors, "params": params or None}
+
+def build_visual_block(res: Dict[str, Any], grid: List[List[int]], cards: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "grid": grid,
+        "candidates": gen_all_candidates(grid),
+        "pattern": build_visual_pattern(res, grid),
+        "action": build_visual_action(res)
+    }
+
+def build_card(card_src: Dict[str, Any], type_id: str) -> Dict[str, Any]:
+    example = card_src.get("example") or {}
+    ex_grid = example.get("grid")
+    if not is_grid_9x9(ex_grid):
+        return {k: card_src[k] for k in ("id","title","difficulty","summary","intuition","how_to_apply") if k in card_src}
+    ex_cand = gen_all_candidates(ex_grid)
+    hl = example.get("highlights") or {"cells": [], "eliminations": []}
+    cells = hl.get("cells") or []
+    elims = hl.get("eliminations") or []
+    anchors: List[Dict[str, Any]] = []
+    if type_id in ("naked_single", "hidden_single_row", "hidden_single_col", "hidden_single_box"):
+        if cells:
+            anchors.append({"row": cells[0]["row"], "col": cells[0]["col"], "role": "target"})
+    elif type_id == "locked_candidate_pointing":
+        for cell in cells:
+            anchors.append({"row": cell["row"], "col": cell["col"], "role": "box_candidate"})
+    elif type_id == "locked_candidate_claiming":
+        for cell in cells:
+            anchors.append({"row": cell["row"], "col": cell["col"], "role": "row_candidate"})
+    elif type_id == "naked_pair":
+        for cell in cells:
+            anchors.append({"row": cell["row"], "col": cell["col"], "role": "pair"})
+    elif type_id == "x_wing":
+        for cell in cells:
+            anchors.append({"row": cell["row"], "col": cell["col"], "role": "corner"})
+    elif type_id == "xy_wing":
+        for i, cell in enumerate(cells):
+            anchors.append({"row": cell["row"], "col": cell["col"], "role": "pivot" if i == 0 else "pincer"})
+    elif type_id == "swordfish":
+        for cell in cells:
+            anchors.append({"row": cell["row"], "col": cell["col"], "role": "corner"})
+    action: Optional[Dict[str, Any]] = None
+    elim_list = [{"row": e["row"], "col": e["col"], "remove": e.get("digit")} for e in elims if e.get("digit")]
+    if elim_list:
+        action = {"type": "elimination", "eliminations": elim_list}
+    else:
+        if anchors:
+            r, c = anchors[0]["row"], anchors[0]["col"]
+            cs = ex_cand[r][c]
+            if len(cs) == 1:
+                action = {"type": "placement", "placement": {"row": r, "col": c, "value": cs[0]}}
+    out = {k: card_src[k] for k in ("id","title","difficulty","summary","intuition","how_to_apply") if k in card_src}
+    out["example"] = {
+        "grid": ex_grid,
+        "candidates": ex_cand,
+        "pattern": {"id": type_id, "anchors": anchors, "params": None},
+        "action": action
+    }
+    return out
+
+def render_html_for_hint(res: Dict[str, Any]) -> str:
+    result = res if res.get("type") else res.get("result", {})
+    visual = result.get("visual") or {}
+    card = result.get("card")
+    title = f"Sudoku Hint: {result.get('type','none')}"
+    return _render_html_page(title, visual, card, error=None)
+
+def render_html_error(grid: List[List[int]], cand: List[List[List[int]]], error_msg: str) -> str:
+    visual = {"grid": grid, "candidates": cand, "pattern": None, "action": None}
+    return _render_html_page("Sudoku Error", visual, None, error=error_msg)
+
+def render_html_for_patterns(card: Dict[str, Any]) -> str:
+    title = f"Sudoku Pattern: {card.get('title','')}"
+    visual = None
+    return _render_html_page(title, visual, card, error=None)
+
+def _render_html_page(title: str, visual: Optional[Dict[str, Any]], card: Optional[Dict[str, Any]], error: Optional[str]) -> str:
+    css = """
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; }
+    .layout { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 640px) { .layout { grid-template-columns: 1fr 340px; } }
+    .banner { padding: 12px; border-radius: 6px; margin-bottom: 12px; }
+    .banner.error { background: #ffe5e5; color: #900; border: 1px solid #f99; }
+    .header { margin-bottom: 8px; }
+    .grid-wrap { display: grid; grid-template-columns: 24px auto; grid-template-rows: 24px auto; }
+    .col-labels { display: grid; grid-template-columns: repeat(9, 1fr); }
+    .row-labels { display: grid; grid-template-rows: repeat(9, 1fr); }
+    .label { font-size: 12px; text-align: center; color: #555; }
+    .board { display: grid; grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(9, 1fr); border: 2px solid #333; }
+    .cell { aspect-ratio: 1 / 1; border: 1px solid #bbb; position: relative; display: flex; align-items: center; justify-content: center; }
+    .cell.thick-right { border-right: 2px solid #333; }
+    .cell.thick-bottom { border-bottom: 2px solid #333; }
+    .digit { font-size: 22px; font-weight: 700; color: #111; }
+    .pencil { position: absolute; inset: 4px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); font-size: 10px; color: #444; }
+    .pencil .mark { display: grid; place-items: center; line-height: 1; height: 100%; width: 100%; }
+    .anchor.primary { outline: 2px solid #2b6cb0; background: rgba(66, 153, 225, 0.15); }
+    .anchor.secondary { outline: 2px solid #d69e2e; background: rgba(214, 158, 46, 0.15); }
+    .placement { box-shadow: 0 0 0 3px #2f855a inset; background: rgba(72, 187, 120, 0.18); }
+    .badge { position: absolute; top: 2px; right: 2px; background: #e53e3e; color: white; font-size: 9px; border-radius: 8px; padding: 0 4px; text-decoration: line-through; }
+    .sidebar { border: 1px solid #ddd; border-radius: 6px; padding: 12px; }
+    .sidebar h2 { margin: 0 0 8px 0; font-size: 16px; }
+    .chips { color: #555; font-size: 12px; }
+    ul { margin: 6px 0; }
+    """
+    def label_for_row(r):
+        return f"r{r+1}"
+    def label_for_col(c):
+        return f"c{c+1}"
+    def role_to_class(role: str) -> str:
+        if role in ("pivot","target","pair","corner","box_candidate","line_candidate","row_candidate","col_candidate"):
+            return "primary"
+        if role == "pincer":
+            return "secondary"
+        return "primary"
+    def render_board(v: Dict[str, Any]) -> str:
+        grid = v.get("grid")
+        cands = v.get("candidates") or [[[] for _ in range(9)] for _ in range(9)]
+        anchors = (v.get("pattern") or {}).get("anchors") or []
+        action = v.get("action") or {}
+        placement = (action.get("placement") if action.get("type") == "placement" else None)
+        elims = action.get("eliminations") or []
+        anch_map: Dict[tuple, str] = {}
+        for a in anchors:
+            anch_map[(a["row"], a["col"])] = role_to_class(a.get("role"))
+        elim_map: Dict[tuple, List[int]] = {}
+        for e in elims:
+            elim_map.setdefault((e["row"], e["col"]), []).append(e["remove"])
+        html_cells = []
+        for r in range(9):
+            for c in range(9):
+                classes = ["cell"]
+                if c in (2,5): classes.append("thick-right")
+                if r in (2,5): classes.append("thick-bottom")
+                if (r,c) in anch_map:
+                    classes.append(f"anchor {anch_map[(r,c)]}")
+                if placement and placement.get("row") == r and placement.get("col") == c:
+                    classes.append("placement")
+                cell_html = f"<div class='{' '.join(classes)}' title='{label_for_row(r)}{label_for_col(c)}'>"
+                val = grid[r][c]
+                if isinstance(val, int) and val != 0:
+                    cell_html += f"<div class='digit'>{val}</div>"
+                else:
+                    cell_html += "<div class='pencil'>"
+                    for d in range(1,10):
+                        mark = "" if d not in cands[r][c] else str(d)
+                        badge = ""
+                        # elimination badge even if mark absent
+                        if (r,c) in elim_map and d in elim_map[(r,c)]:
+                            badge = f"<span class='badge'>{d}</span>"
+                        cell_html += f"<div class='mark'>{mark}{badge}</div>"
+                    cell_html += "</div>"
+                cell_html += "</div>"
+                html_cells.append(cell_html)
+        col_labels = "".join([f"<div class='label'>{label_for_col(c)}</div>" for c in range(9)])
+        row_labels = "".join([f"<div class='label'>{label_for_row(r)}</div>" for r in range(9)])
+        board = "".join(html_cells)
+        return f"<div class='grid-wrap'><div></div><div class='col-labels'>{col_labels}</div><div class='row-labels'>{row_labels}</div><div class='board'>{board}</div></div>"
+    parts = ["<html><head><meta charset='utf-8'><title>"+title+"</title><style>"+css+"</style></head><body>"]
+    parts.append(f"<div class='header'><h1>{title}</h1></div>")
+    if error:
+        parts.append(f"<div class='banner error'>Error: {error}</div>")
+    parts.append("<div class='layout'>")
+    if visual:
+        parts.append("<div>")
+        parts.append(render_board(visual))
+        parts.append("</div>")
+    parts.append("<div class='sidebar'>")
+    if card:
+        parts.append(f"<h2>{card.get('title','—')}</h2>")
+        parts.append(f"<div class='chips'>Сложность: {card.get('difficulty','—')}</div>")
+        parts.append(f"<p>{card.get('summary','—')}</p>")
+        parts.append(f"<p>{card.get('intuition','—')}</p>")
+        hta = card.get('how_to_apply')
+        if isinstance(hta, list):
+            parts.append("<ul>" + "".join([f"<li>{x}</li>" for x in hta]) + "</ul>")
+        elif isinstance(hta, str):
+            parts.append("<ul><li>"+hta+"</li></ul>")
+        ex = card.get('example')
+        if ex and isinstance(ex, dict):
+            parts.append("<h3>Наглядный пример</h3>")
+            parts.append(render_board(ex))
+    else:
+        parts.append("<h2>Справка</h2><p>—</p>")
+    parts.append("</div>")
+    parts.append("</div>")
+    parts.append("</body></html>")
+    return "".join(parts)
 
 if __name__ == "__main__":
     try:
