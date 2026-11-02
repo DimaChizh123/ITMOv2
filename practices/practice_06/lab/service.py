@@ -38,6 +38,17 @@ class Shop:
     def rows(self, query):
         return [dict(row) for row in self.db.execute(query)]
 
+    def _require_session(self, headers):
+        """Return session dict or None if missing."""
+        return self.sessions.get(headers.get("X-Token"))
+
+    def _username_by_id(self, user_id):
+        # Reverse lookup from accounts; small fixed dict
+        for name, (_, uid, _) in self.accounts.items():
+            if uid == user_id:
+                return name
+        return None
+
     def dispatch(self, method, target, body, headers):
         url = urlsplit(target)
         query = {k: v[0] for k, v in parse_qs(url.query, keep_blank_values=True).items()}
@@ -54,11 +65,27 @@ class Shop:
             self.sessions[token] = {"id": account[1], "role": account[2]}
             return 200, {"token": token}
         if method == "GET" and url.path == "/profile":
-            return 200, self.rows(f"SELECT * FROM profiles WHERE id = {query.get('id', '1')}")
+            session = self._require_session(headers)
+            if not session:
+                return 401, {"error": "login required"}
+            # Server decides whose profile to show; ignore query param
+            cur = self.db.execute("SELECT * FROM profiles WHERE id = ?", (session["id"],))
+            return 200, [dict(row) for row in cur]
         if method == "GET" and url.path == "/search":
-            return 200, self.rows(f"SELECT * FROM profiles WHERE name LIKE '%{query.get('q', '')}%'")
+            session = self._require_session(headers)
+            if not session or session.get("role") != "staff":
+                return 403, {"error": "staff only"}
+            q = f"%{query.get('q', '')}%"
+            cur = self.db.execute("SELECT * FROM profiles WHERE name LIKE ?", (q,))
+            return 200, [dict(row) for row in cur]
         if method == "GET" and url.path == "/orders":
-            return 200, self.rows("SELECT * FROM orders")
+            session = self._require_session(headers)
+            if not session:
+                return 401, {"error": "login required"}
+            if session.get("role") == "staff":
+                return 200, self.rows("SELECT * FROM orders")
+            cur = self.db.execute("SELECT * FROM orders WHERE owner = ?", (session["id"],))
+            return 200, [dict(row) for row in cur]
         if method == "POST" and url.path == "/orders":
             session = self.sessions.get(headers.get("X-Token"))
             if not session:
@@ -66,25 +93,37 @@ class Shop:
             product = body["product"]
             if product not in self.products:
                 return 400, {"error": "unknown product"}
-            price = body.get("price", self.products[product])
+            # Force catalog price; ignore client-supplied price
+            price = self.products[product]
             cursor = self.db.execute("INSERT INTO orders(owner, product, price) VALUES (?, ?, ?)",
                                      (session["id"], product, price))
             self.db.commit()
             return 201, {"id": cursor.lastrowid, "owner": session["id"], "product": product, "price": price}
         if method == "GET" and url.path == "/admin/export":
-            if headers.get("X-Role") != "staff":
+            session = self._require_session(headers)
+            if not session or session.get("role") != "staff":
                 return 403, {"error": "staff only"}
             return 200, self.rows("SELECT * FROM profiles")
         if method == "GET" and url.path == "/files":
-            name = f"files/{query.get('user', 'alice')}/{query.get('path', 'receipt.txt')}"
+            session = self._require_session(headers)
+            if not session:
+                return 401, {"error": "login required"}
+            # Only allow own receipt; ignore query parameters for security
+            username = self._username_by_id(session["id"]) or "alice"
+            name = f"files/{username}/receipt.txt"
             return 200, {"content": self.sandbox.read(name)}
         if method == "GET" and url.path == "/debug/logs":
+            session = self._require_session(headers)
+            if not session or session.get("role") != "staff":
+                return 403, {"error": "staff only"}
             return 200, self.logs.copy()
         if method == "POST" and url.path == "/reviews":
             self.reviews.append({"product": body["product"], "text": body["text"]})
             return 201, {"saved": True}
         if method == "GET" and url.path == "/reviews/view":
-            return 200, "<html><body>" + "".join(f"<p>{r['text']}</p>" for r in self.reviews) + "</body></html>"
+            # Escape review text to avoid XSS
+            import html
+            return 200, "<html><body>" + "".join(f"<p>{html.escape(r['text'])}</p>" for r in self.reviews) + "</body></html>"
         if method == "GET" and url.path == "/assistant/context":
             orders = self.rows(f"SELECT * FROM orders WHERE id = {query.get('order_id', '1')}")
             prompt = (
@@ -100,12 +139,30 @@ class Shop:
             decision = body["decision"]
             tool, arguments = decision["tool"], decision.get("arguments", {})
             if tool == "read_file":
-                return 200, {"content": self.sandbox.read(arguments["path"])}
+                session = self._require_session(headers)
+                if not session:
+                    return 401, {"error": "login required"}
+                username = self._username_by_id(session["id"]) or "alice"
+                allowed = f"files/{username}/receipt.txt"
+                if arguments.get("path") != allowed:
+                    return 403, {"error": "forbidden"}
+                return 200, {"content": self.sandbox.read(allowed)}
             if tool == "export_profiles":
+                session = self._require_session(headers)
+                if not session or session.get("role") != "staff":
+                    return 403, {"error": "staff only"}
                 return 200, self.rows("SELECT * FROM profiles")
             if tool == "delete_tree":
-                self.sandbox.delete_tree(arguments["path"])
-                return 200, {"deleted": arguments["path"]}
+                session = self._require_session(headers)
+                if not session:
+                    return 401, {"error": "login required"}
+                username = self._username_by_id(session["id"]) or "alice"
+                # Only allow deleting own files subtree, not the whole sandbox
+                path = arguments.get("path", "")
+                if path not in (f"files/{username}", f"files/{username}/"):
+                    return 403, {"error": "forbidden"}
+                self.sandbox.delete_tree(f"files/{username}")
+                return 200, {"deleted": f"files/{username}"}
             return 400, {"error": "unknown tool"}
         return 404, {"error": "not found"}
 
