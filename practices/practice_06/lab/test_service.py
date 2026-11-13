@@ -32,11 +32,12 @@ class ShopTest(unittest.TestCase):
     def test_tokens_identify_distinct_users(self):
         alice, bob = self.login(), self.login("bob", "learn-bob")
         self.assertNotEqual(alice, bob)
-        self.assertEqual(self.request("GET", "/profile?id=1", headers=alice)[1][0]["name"], "TEST_ALICE")
-        self.assertEqual(self.request("GET", "/profile?id=2", headers=bob)[1][0]["name"], "TEST_BOB")
+        # Profile ignores query and returns own
+        self.assertEqual(self.request("GET", "/profile?id=2", headers=alice)[1][0]["name"], "TEST_ALICE")
+        self.assertEqual(self.request("GET", "/profile?id=1", headers=bob)[1][0]["name"], "TEST_BOB")
 
     def test_staff_can_export_with_staff_session(self):
-        auth = {**self.login("staff", "learn-staff"), "X-Role": "staff"}
+        auth = {**self.login("staff", "learn-staff")}
         status, profiles = self.request("GET", "/admin/export", headers=auth)
         self.assertEqual(status, 200)
         self.assertEqual(len(profiles), 2)
@@ -46,8 +47,9 @@ class ShopTest(unittest.TestCase):
         status, profile = self.request("GET", "/profile?id=1", headers=auth)
         self.assertEqual(status, 200)
         self.assertEqual(profile[0]["name"], "TEST_ALICE")
-        status, receipt = self.request("GET", "/files?user=alice&path=receipt.txt", headers=auth)
+        status, receipt = self.request("GET", "/files?user=bob&path=private/operator-note.txt", headers=auth)
         self.assertEqual(status, 200)
+        # Only own receipt is returned regardless of query
         self.assertIn("TEST_ALICE", receipt["content"])
 
     def test_customer_can_buy_at_catalog_price(self):
@@ -63,6 +65,14 @@ class ShopTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/reviews", {"product": "chair", "text": "Comfortable"}, auth)[0], 201)
         self.assertIn("Comfortable", self.request("GET", "/reviews/view", headers=auth)[1])
 
+    def test_reviews_escaped(self):
+        auth = self.login()
+        payload = "<script>alert(1)</script>"
+        self.assertEqual(self.request("POST", "/reviews", {"product": "lamp", "text": payload}, auth)[0], 201)
+        status, html = self.request("GET", "/reviews/view", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
     def test_assistant_can_return_own_receipt(self):
         auth = self.login()
         status, context = self.request("GET", "/assistant/context?order_id=1", headers=auth)
@@ -73,6 +83,33 @@ class ShopTest(unittest.TestCase):
         }, auth)
         self.assertEqual(status, 200)
         self.assertIn("TEST_ALICE", result["content"])
+
+    def test_assistant_cannot_read_foreign_or_private(self):
+        auth = self.login()
+        # Foreign receipt denied
+        status, _ = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "read_file", "arguments": {"path": "files/bob/receipt.txt"}}
+        }, auth)
+        self.assertEqual(status, 403)
+        # Private note denied even if guessed
+        status, _ = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "read_file", "arguments": {"path": "private/operator-note.txt"}}
+        }, auth)
+        self.assertEqual(status, 403)
+
+    def test_delete_tree_limited_to_own_files(self):
+        auth = self.login()
+        # Cannot delete arbitrary paths
+        status, _ = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "delete_tree", "arguments": {"path": "."}}
+        }, auth)
+        self.assertEqual(status, 403)
+        # Allowed to delete own files subtree
+        status, result = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "delete_tree", "arguments": {"path": "files/alice"}}
+        }, auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["deleted"], "files/alice")
 
 
 class SandboxTest(unittest.TestCase):
